@@ -1,1 +1,990 @@
+Aspect-oriented Programming (AOP：面向切面编程) 提供另一种思考程序结构的方式来补充(增强) 面向对象编程（OOP）。
 
+OOP 中模块化的关键单元是类，倾向于采用封装、继承、多态等概念，将一个个的功能在对象中来实现。而在 AOP 中模块化的单元是 切面，切面使关注点（例如事务管理）模块化，可以跨越多种类型和对象。
+
+Spring AOP 框架是 Spring 的核心组件之一。Spring IoC 容器不依赖于 AOP，但 AOP 是对 Spring IoC 的补充，以提供功能强大的中间件解决方案。
+
+在实际开发中，存在某一类功能在很多对象的很多方法中都有需要使用。例如，对数据库访问的方法有事务管理的需求、数据库访问需要动态切换数据源的需求、很多方法需要打印日志的需求。
+
+按照面向对象的编程方式，这些相同的功能要在很多方法中重复实现，或者在很多方法中调用。这样的话，这些功能就难以成为独立的模块，本身不与业务相关但与业务耦合紧密。AOP 面向切面编程就能很好解决这类问题。
+
+AOP 低层实现是基于动态代理技术，是对目标对象方法的增强，本篇文章会更多使用 增强 这个词语来描述 AOP 的特性。
+
+AOP 概念
+AOP 术语
+AOP 的术语并不是特别直观（非常抽象），也不是 Spring 特有的。
+
+Aspect（切面）：注点的模化，涉及跨越多个类（通俗理解，即将某一涉及多个类的功能抽出模块化，定义为切面）。例如，事务管理器。
+
+Join Point（连接点）：程序执行过程中的一个点。例如，方法的执行或异常的处理。在Spring AOP中，连接点始终代表方法的执行。
+
+Advice（通知）：切面在指定连接点采取的操作。通知类型包括 around，before，after 等。许多 AOP 框架（包括Spring）将通知建模为拦截器，并在连接点周围维护一系列拦截器。
+
+Pointcut（切入点）：匹配连接点的判断。通知与切入点表达式关联，并在与该切入点匹配的任何连接点上运行。切入点表达式匹配的连接点的概念是 AOP 的核心，默认情况下，Spring 使用 AspectJ 切入点表达式语言。
+
+Introduction（引入）：代表类型声明其它方法或字段。Spring AOP 允许向任何通知对象引入新的接口（和相应的实现）。
+
+例如，可以使用 Introduction 使 Bean 实现 IsModified 接口，以简化缓存。（在 AspectJ 社区中，Introduction 被称为类型间声明）。
+
+Target object（目标对象）：一个或多个切面通知的对象，也称为 被通知对象。由于 Spring AOP 是通过使用运行时代理来实现的，所以该对象始终是代理对象。
+
+AOP proxy（AOP 代理）：即代理对象，由 AOP 框架创建的对象，用于实现切面契约（通知方法执行等）。
+
+在 Spring Framework 中，AOP 代理基于 JDK 动态代理或CGLIB 代理实现。
+
+Weaving（编织）：将切面与其它应用或对象链接以创建通知的对象。这可以在编译时（例如，使用 AspectJ 编译器），加载时或运行时完成。与其他纯 Java AOP 框架一样，Spring AOP在运行时执行编织。
+
+通知类型
+Before：在方法执行前调用通知，在连接点之前运行，且其执行到连接点之间的流程无法阻止（除非引发异常）。
+After returning：在方法执行后调用通知，在连接点执行完后运行（如果方法返回而没有引发异常）。
+After throwing：在方法抛出异常后调用通知，在代理的目标方法因抛异常而退出时运行。
+After (finally) ：最终通知，在方法执行完后调用通知，不管连接点退出的方式（正常或异常返回），都执行。
+Around：环绕通知，可以在方法调用前和调用后执行自定义行为。这是强大的通知类型，还负责是选择继续到连接点，还是通过返回自己的返回值来缩短通知的方法执行。
+Around 环绕通知，是最通用的一种通知。由于 Spring AOP 与 AspectJ 一样，提供了一系列的通知类型，在使用时，不建议选择最强大的通知类型来实现所需的行为。例如，只需要使用方法的返回值来更新缓存，最好使用 After returning 类型通知，而不是 Around 通知，尽管 Around 通知可以完成相同的任务。
+
+使用最具体的通知类型可提供更简单的编程模型，并减少出错的可能。例如，不需要在用于 Around 通知的连接点上调用 proceed() 方法，因此不会出现执行失败的情况。
+
+所有通知参数都是静态类型的，因此可以使用合适类型（例如，方法执行返回值的类型），而不是对象数组。
+
+切入点匹配的连接点的概念是 AOP 的核心，它与仅提供拦截功能的旧技术有所不同。 切入点使通知能够独立于面向对象层次结构的而。 例如，可以将提供声明性事务管理的环绕通知应用于一组跨越多个对象（例如服务层中的所有业务操作）的方法。
+
+Spring AOP
+AOP 在 Spring Framework 中的应用：
+
+提供声明式企业服务。最重要的服务是声明式事务管理。
+支持用户自定义切面，用 AOP 补充 OOP 的使用。
+Spring AOP 的能力与目标
+Spring AOP是用纯 Java 实现的，不需要特殊的编译过程。Spring AOP 不需要控制类加载器的层次结构，因此适合在servlet 容器或应用程序服务器中使用。
+
+Spring AOP目前只支持方法执行连接点（建议在 spring bean上执行方法）。Spring AOP 的AOP方法不同于大多数其他AOP框架，其目的不是提供最完整的AOP实现（尽管 spring aop 非常强大），相反，其目的是在AOP实现和 Spring IoC 之间提供紧密的集成，以帮助解决应用中的常见问题，因此，Spring 框架的 AOP 功能通常与 Spring IoC 容器一起使用。Spring AOP 为 AOP 可以解决 Java 应用中的大多数问题提供了出色的解决方案。
+
+Spring 将 Spring AOP 和 IoC 与 AspectJ 无缝集成，以便在一致的基于 Spring 的应用程序体系结构中使用AOP。这种集成不会影响 Spring AOP API 或 AOP 联盟 API，Spring AOP保持向后兼容。
+
+AOP 代理
+Spring AOP 默认将标准 JDK 动态代理用于AOP代理，这使得可以代理任何接口（或一组接口）。
+
+Spring AOP 也可以使用 CGLIB 代理，这对于代理类而不是接口是必需的。 默认情况下，如果业务对象未实现接口，则使用 CGLIB。
+
+由于对接口而不是对类进行编程是一种好习惯，因此业务类通常实现一个或多个业务接口。 在那些需要通知在接口上未声明的方法或需要将代理对象作为具体类型传递给方法的情况下（在极少数情况下），可以强制使用CGLIB。
+
+重要的是要理解 Spring AOP 是基于代理的。参考 Understanding AOP Proxies 以全面了解此实现细节。
+
+@AspectJ 支持
+@AspectJ 是一种将切面声明为带有注释的常规 Java类 的样式。AspectJ 项目作为 AspectJ 5发行版的一部分引入了@AspectJ 样式。
+
+Spring 使用 AspectJ 提供的用于切入点解析和匹配的库来解释与 AspectJ 5 相同的注释。但是，AOP 运行时仍然是纯Spring AOP，并且不依赖于 AspectJ 编译器或编织器。
+
+启用 @AspectJ 支持
+要在 Spring 配置中使用 @AspectJ 切面，需要开启 Spring 支持以基于 @AspectJ 切面配置Spring AOP，并基于这些切面是否通知自动代理 Bean。通过自动代理，如果 Spring 确定一个或多个切面通知一个 bean，它会自动为该 Bean 生成一个代理来拦截方法调用，并确保根据需要执行通知。
+
+可以使用 XML 或 Java 配置类来启用 @AspectJ 支持。前提是要确保 AspectJ 的 aspectjweaver.jar 库在应用程序（1.8版或更高版本）的类路径上存在。这个库可以在 AspectJ 发行版的 lib 目录中获得，也可以从 Maven 中央存储库获得。
+
+Java 配置类方式
+
+前提是启用了 @AspectJ 支持，在 Java 配置类上添加 @EnableAspectJAutoProxy 注解。如下示例：
+@Configuration
+@EnableAspectJAutoProxy
+public class AppConfig {
+}
+XML 配置方式
+
+前提是启用了 @AspectJ 支持，基于 XML 配置，添加 aop:aspectj-autoproxy 元素。如下示例：
+
+<aop:aspectj-autoproxy/>
+定义切面 Aspect
+启用 @AspectJ 支持后，Spring 会自动检测在应用上下文中定义的具有 @AspectJ 切面（具有 @Aspect 注解）的类的任何 bean，并用于配置 Spring AOP。
+
+切面（使用 @Aspect 注释的类）可以具有方法和字段，与任何其他类一样。还可以包含 切入点、通知 和 引用声明。
+
+Java 配置类方式
+
+使用 @Aspect 注解定义切面类，并声明为 Bean
+@Aspect
+@Component
+public class NotVeryUsefulAspect {
+}
+XMl 配置文件
+
+使用 @Aspect 注解定义切面类，并在 XML 中将该类注册为 Bean
+<bean id="myAspect" class="org.xyz.NotVeryUsefulAspect">
+    <!-- configure properties of the aspect here -->
+</bean>
+备注：@Aspect 注释不足以在类路径中进行自动检测。因此，需要将切面类注册为 Spring XML 配置中的 Bean；也可以添加 @Componen 注解，通过类路径扫描自动检测切面类。
+
+建议：在 Spring AOP 中，切面本身不能成为其它切面的通知目标。类上的 @Aspect 注解将其标记为一个切面，因此将其从自动代理中排除。
+
+定义切点 Pointcut
+切入点确定了具体的连接点，从而可以控制何时执行通知。Spring AOP 仅支持 Spring Bean 的方法执行连接点，因此可以将切入点视为与 Spring Bean上的方法执行匹配。
+
+切入点声明由两部分组成：一个包含名称和任何参数的签名，和一个切入点表达式，该切入点表达式确定需要代理的目标方法。
+
+在 AOP 的 @AspectJ 注解样式中，定义一个返回类型为 void 的普通方法用作切入点签名，并使用 @Pointcut 注解指定切入点表达式。
+
+以下示例定义了一个名为 anyOldTransfer 的切入点，该 切入点 与任何名为 transfer 的方法进行匹配：
+
+@Pointcut("execution(* transfer(..))") // the pointcut expression
+private void anyOldTransfer() {} // the pointcut signature
+@pointcut 注解默认的 value 属性的值是切入点表达式，是 AspectJ 5 切入点正则表达式。有关 AspectJ 切入点语言的完整讨论，参考 AspectJ Programming Guide（以及 AspectJ 5 Developer’s Notebook）。
+
+切入点表达式
+Spring AOP 支持在切入点表达式中使用以下 AspectJ 切入点指示符（PCD）：
+
+execution：用于匹配方法执行的连接点，可以精准匹配到方法及参数。这是在 Spring AOP 中主要使用的切入点指标符。
+within：匹配限制为指定类型中的连接点，即匹配指定 类 及 子类 的所有方法。
+this：匹配限制为指定类型的连接点，即可向上转型为 this 指定的类型的代理对象中的所有方法。
+target：匹配限制为指定的目标对象（被代理的对象）类型中的所有方法，可以是向上转型为 target 类型的目标对象中的所有方法。
+args：匹配限制为指定的参数类型的所有方法。
+@target：匹配限制为具有指定类型注解的目标对象的所有方法。
+@args：匹配限制为传入的实际参数的运行时类型具有指定类型的注解的所有方法。
+@within：匹配具有指定的注解类的所有方法。
+@annotation：匹配具有指定注解的所有方法。
+切入点指示符可以与 && (and), || (or), and ! (negation) 运算符一起使用。
+
+完整的 AspectJ 切入点语言但在 Spring 不支持的切入点指示符：call, get, set, preinitialization, staticinitialization, initialization, handler, adviceexecution, withincode, cflow, cflowbelow, if, @this, and @withincode。在Spring AOP 解析的切入点表达式中使用这些切入点指示符会导致抛出 IllegalArgumentException，但可能在未来的版本中扩展。
+
+切入点表达式组合
+可以使用 &&, || 和 ! 来组合切入点表达式。也可以按名称引用切入点表达式。如下示例：
+@Pointcut("execution(public * (..))")
+private void anyPublicOperation() {} 
+
+@Pointcut("within(com.xyz.someapp.trading..)")
+private void inTrading() {} 
+
+@Pointcut("anyPublicOperation() && inTrading()")
+private void tradingOperation() {}
+anyPublicOperation：匹配所有 public 方法。
+inTrading：匹配 com.xyz.someapp.trading 包下的所有方法。
+tradingOperation：匹配 com.xyz.someapp.trading 包下的所有 public 方法。引入的是前两个切入点，即前两个切入点表达式的并集组合。
+构建复杂的切入点表达式的最佳实践是使用较小的表达式组件。
+
+定义通用的切入点
+在实际开发中，定义的切入点可能在多个地方引用，可以定义一个 SystemArchitecture 切面，以捕获常见的切入点表达式。 如下示例：
+@Aspect
+public class SystemArchitecture {
+
+    /**
+     * web 层的所有方法
+     * com.xyz.someapp.web 包及子包
+     */
+    @Pointcut("within(com.xyz.someapp.web..*)")
+    public void inWebLayer() {
+    }
+
+    /**
+     * service 层的所有方法
+     * com.xyz.someapp.service 包及子包
+     */
+    @Pointcut("within(com.xyz.someapp.service..*)")
+    public void inServiceLayer() {
+    }
+
+    /**
+     * dao 层的所有方法
+     * com.xyz.someapp.dao 包及子包
+     */
+    @Pointcut("within(com.xyz.someapp.dao..*)")
+    public void inDataAccessLayer() {
+    }
+
+    /**
+     * 业务层的所有方法
+     * 接口包及实现接口的子包
+     * 如果是按功能对 service 进行分组的(例如, com.xyz.someapp.abc.service 和 com.xyz.someapp.def.service,
+     * 则切点表达式是 execution(* com.xyz.someapp..service..(..)))
+     */
+    @Pointcut("execution(* com.xyz.someapp..service..*(..))")
+    public void businessService() {
+    }
+
+    /**
+     * 数据访问操作
+     * DAO 接口包及实现接口的子包
+     */
+    @Pointcut("execution(* com.xyz.someapp.dao..*(..))")
+    public void dataAccessOperation() {
+    }
+
+}
+这样就可以在需要切入点表达式的任何地方引用在此方面定义的切入点。 例如，要使服务层具有事务性，可以编写以下内容：
+<aop:config>
+    <aop:advisor
+        pointcut="com.xyz.someapp.SystemArchitecture.businessService()"
+        advice-ref="tx-advice"/>
+</aop:config>
+
+<tx:advice id="tx-advice">
+    <tx:attributes>
+        <tx:method name="*" propagation="REQUIRED"/>
+    </tx:attributes>
+</tx:advice>
+<aop:config> and <aop:advisor> 元素参考 Schema-based AOP Support，事务元素参考 Transaction Management 。
+
+常用表达式示例
+Spring AOP 用户可能最常使用的切入点指示符是 execution，其格式如下：
+
+1
+execution(修饰符 返回类型 包名.包名....类名.方法名(参数类型) 异常类型)
+返回类型：* 匹配任何返回类型， 或指定方法返回的类型。
+方法名：* 匹配全部名称或部分。
+参数类型：()匹配不带参数的方法、(..)匹配任何数量（零个或多个）的参数、(*)匹配任何类型的一个参数的方法、(*, String)匹配两个参数的方法，第一个可以是任何类型，第二个必须是 String。
+以下示例显示了一些常见的切入点表达式：
+
+匹配任何 public 类型的方法
+
+execution(public * *(..))
+匹配任何以 set 开头的方法 名
+
+execution(* set*(..))
+匹配 AccountService 接口中的所有方法
+
+execution(* com.xyz.service.AccountService.*(..))
+匹配 service 包及子包中的所有方法
+
+execution(* com.xyz.service..*(..))
+within 匹配 service 包中的所有方法
+
+within(com.xyz.service.*)
+within 匹配 service 包及其下面的子包中的所有方法
+
+within(com.xyz.service..*)
+还有另一种与 @within 效果相同的表达式写法：
+
+@Pointcut("within(@org.springframework.web.bind.annotation.RestController *)")
+public void pointcut() {
+}
+this 匹配实现了 AccountService 接口的代理的所有方法
+
+this(com.xyz.service.AccountService)
+target 匹配实现了 AccountService 接口的目标对象中的所有方法
+
+target(com.xyz.service.AccountService)
+args 匹配接收单个参数且运行时传递的参数类型为 Serializable
+
+args(java.io.Serializable)
+注意：本例中给出的切入点不同于 execution(* *(java.io.Serializable))。如果运行时传递的参数是可序列化的，则 args 版本匹配；如果方法签名声明了可序列化类型的单个参数，则 execution 版本匹配。
+
+@target 匹配目标对象使用了 @Transactional 注解的方法
+
+@target(org.springframework.transaction.annotation.Transactional)
+@within 匹配目标对象声明类型具有@Transactional 注解的方法
+
+@within(org.springframework.transaction.annotation.Transactional)
+@annotation 匹配具有 @Transactional 注解的方法
+
+@annotation(org.springframework.transaction.annotation.Transactional)
+切点注解类型传参：
+
+切点传入注解类型参数，在通知引用切点时可直接取到切点的参数，就可以在通知方法里执行逻辑操作。
+
+@Aspect
+@Component
+public class APIInfoLogAspect {
+    private static final Logger logger = LogManager.getLogger(APIInfoLogAspect.class);
+    
+    @Pointcut("@annotation(requestMapping)")
+    public void pointcut(RequestMapping requestMapping) {
+    }
+
+    @Before("pointcut(requestMapping)")
+    public void logParameters(JoinPoint joinPoint, RequestMapping requestMapping) {
+		//.......
+    }
+
+    @AfterReturning(returning = "response", pointcut = "pointcut(requestMapping)")
+    public void logReturnParameters(Object response, RequestMapping requestMapping) {
+        //........
+    }
+}
+@args 匹配接收单个参数，且参数的运行时类型具有 @Classified 注解。
+
+1
+@args(com.xyz.security.Classified)
+bean 匹配 Spring bean 名为 tradeService 中的方法
+
+1
+bean(tradeService)
+bean 匹配 Spring bean 名满足通配符 *Service 的 bean 中的所有方法
+
+1
+bean(*Service)
+编写良好的切入点
+在编写切入点表达式时，特别是模式匹配的表达式，应明要实现的目上标，尽可能缩小搜索的范围，以获得最佳的匹配性能。因为检查代码并确定每个连接点是否匹配（静态或动态）指定的切入点是一个代价高昂的过程。
+
+现有的切入点指示符可分为三类：Kinded(同类)，Scoping(作用域)，Contextual 上下文。
+
+Kinded：可选择 execution, get, set, call, and handler 指示符。
+Scoping：可选择 within 和 withincode 。
+Contextual：匹配上下文，可选择 this，target 和 @annotation 。
+编写良好的切入点应该至少包括前两种类型（kinded 和 scoping）。可以根据连接点上下文包含要匹配的上下文指示符，也可以绑定该上下文以在通知中使用。
+
+由于额外的处理和分析，只提供一个 kinded 指示符或一个 Contextual 指示符也可以工作，但会影响编织性能（使用的时间和内存）。
+
+Scoping 作用域指示符匹配起来非常快，使用它们意味着 AspectJ 可以非常快地消除不应进一步处理的连接点组。一个好的切入点应尽可能包含一个切入点。
+
+AOP通知类型
+通知与切入点表达式关联，并在与切入点匹配的方法执行之前、之后或环绕运行。切入点表达式可以是对命名切入点的简单引用（引用其它切入点，见上面的 切入点表达式组合 小节），也可以是就地声明的切入点表达式。
+
+Before Advice
+使用 @Before 注解声明前置通知，在匹配的方法执行前运行。
+
+1
+2
+3
+4
+5
+6
+7
+8
+@Aspect
+public class BeforeExample {
+	//引用外部公共的切点
+    @Before("com.xyz.myapp.SystemArchitecture.dataAccessOperation()")
+    public void doAccessCheck() {
+        // ...
+    }
+}
+如果使用本地的切点表达式，可以重写上面的例如，如下示例：
+
+1
+2
+3
+4
+5
+6
+7
+8
+@Aspect
+public class BeforeExample {
+
+    @Before("execution(* com.xyz.myapp.dao..(..))")
+    public void doAccessCheck() {
+        // ...
+    }
+}
+After Returning Advice
+使用 @AfterReturning 注解声明后置通知，当匹配的方法执行正常返回时运行。
+
+若需要在通知正文中访问返回的实际值。可以使用 @AfterReturning 注解的 returning 属性绑定返回值。如下示例：
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+@Aspect
+public class AfterReturningExample {
+
+    @AfterReturning(
+        pointcut="com.xyz.myapp.SystemArchitecture.dataAccessOperation()",
+        returning="retVal")
+    public void doAccessCheck(Object retVal) {
+        // ...
+    }
+}
+returning 属性的值必须与通知方法中的参数名一致。当方法执行返回时，返回值作为相应的参数值传递给 advice 方法。上面例子，Object 类型匹配任何返回值，可以指定返回值类型。
+
+注意：当使用 after returning 通知，不可能返回完全不同的引用。
+
+After Throwing Advice
+使用 @AfterThrowing 注解声明异常通知，在匹配的方法执行抛出异常后运行。
+
+1
+2
+3
+4
+5
+6
+7
+8
+@Aspect
+public class AfterThrowingExample {
+
+    @AfterThrowing("com.xyz.myapp.SystemArchitecture.dataAccessOperation()")
+    public void doRecoveryActions() {
+        // ...
+    }
+}
+当要匹配指定异常类型时才运行通知，且需要访问通知正文抛出的异常。可以使用 throwing 属性来指定匹配，并将抛出的异常绑定到通知参数。如下示例：
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+@Aspect
+public class AfterThrowingExample {
+
+    @AfterThrowing(
+        pointcut="com.xyz.myapp.SystemArchitecture.dataAccessOperation()",
+        throwing="ex")
+    public void doRecoveryActions(DataAccessException ex) {
+        // ...
+    }
+}
+throwing 属性值必须与通知方法的参数名一致。当一个方法执行通过抛出异常退出时，异常将作为相应的参数值传递给通知方法。throwing 子句还将匹配指定抛出的异常类型（在本例中为DataAccessException）。
+
+After (Finally) Advice
+使用 @After 注解声明最终通知，在匹配的方法执行退出后运行，不管是正常执行完退出或是抛出异常退出都会运行。
+
+使用最终通知必须准备好处理正常或异常的返回条件。最终通知通常用于释放资源和类似的目的。
+
+Around Advice
+使用 @Around 注解声明环绕通知，可以在方法执行前和之后执行自定义的行为。可以定义何时，如何，甚至根本不执行目标方法。
+
+如果需要以线程安全的方式（例如，启动和停止计时器）在方法执行之前和之后共享状态，则通常使用绕行建议。
+
+在实际使用时，选择最贴近实际需求的通知类型。例如，不要在前置通知即可满足需求时，使用环绕通知。
+
+环绕通知的第一个参数必须是 ProceedingJoinPoint 类型，也只能在环绕通知方法中使用。
+
+在通知正文(方法)中，ProceedingJoinPoint 调用 proceed() 方法，会执行代理的目标方法。proceed 方法也可以传入Object[]参数，数组中的值在代理的目标方法执行时用作参数。
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+@Aspect
+public class AroundExample {
+
+    @Around("com.xyz.myapp.SystemArchitecture.businessService()")
+    public Object doBasicProfiling(ProceedingJoinPoint pjp) throws Throwable {
+        // start stopwatch
+        Object retVal = pjp.proceed();
+        // stop stopwatch
+        return retVal;
+    }
+}
+环绕通知的返回值是执行 proceed() 方法的返回值。例如，一个简单的缓存切面，如果缓存中有值，则直接返回，如果无没，则调用 proceed() 方法。
+
+注意：在环绕通知方法中，proceed() 方法可能被调用一次，多次或完全不被调用都是允许的。
+
+AOP 通知参数
+访问当前JoinPoint
+任何通知方法都可以将 org.aspectj.lang.JoinPoint 类型参数作为第一个参数。注意：Around 环绕通知的第一个参数类型必须为 ProceedingJoinPoint 类型，其下 JoinPoint 的子类。JoinPoint 接口提供了多个有用的方法。如下示例：
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+@Aspect
+@Component
+public class RequestLimitAspectA {
+
+    /**
+     * 使用通知传参方式
+     * @param requestLimit
+     */
+    @Pointcut("@annotation(requestLimit)")
+    public void pointcut(RequestLimit requestLimit) {
+    }
+
+    @Before("pointcut(requestLimit)")
+    public void before(JoinPoint joinPoint, RequestLimit requestLimit) throws IOException {
+
+        //获取目标方法的参数信息
+        Object[] args = joinPoint.getArgs();
+        //AOP代理对象的信息RequestLimitAspect
+        Object aThis = joinPoint.getThis();
+        //代理的目标对象(被代理对象)
+        Object target = joinPoint.getTarget();
+        String kind = joinPoint.getKind();
+        //用的最多,被通知的方法的签名(代理的目标方法签名描述)
+        Signature signature = joinPoint.getSignature();
+        //代理的是哪一个方法
+        String method = signature.getName();
+        //AOP代理类的类(class)信息
+        Class declaringType = signature.getDeclaringType();
+        //AOP代理类的名字
+        String declaringTypeName = signature.getDeclaringTypeName();
+        //获取RequestAttributes
+        RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
+        //获取 sessionId
+        String sessionId = requestAttributes.getSessionId();
+        //获取参数 0-Request,1-Session
+        String[] attributeNames = requestAttributes.getAttributeNames(0);
+        Object sessionMutex = requestAttributes.getSessionMutex();
+        //如果要获取Session信息的话，可以这样写：
+        HttpSession session = (HttpSession) requestAttributes.resolveReference(RequestAttributes.REFERENCE_SESSION);
+        //从获取RequestAttributes中获取HttpServletRequest的信息
+        HttpServletRequest request1 = (HttpServletRequest) requestAttributes.resolveReference(RequestAttributes.REFERENCE_REQUEST);
+        HttpServletRequest request2 = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+        HttpServletResponse response = ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getResponse();
+        //执行切点位置
+        SourceLocation sourceLocation = joinPoint.getSourceLocation();
+    }
+}
+传递参数到通知
+args 传参
+
+要使参数值对通知正文有效，可以使用 args 的绑定形式。如果在 args 表达式中使用参数名代替类型名，则在调用通知时，会将 args 表达式中的参数名作为参数值传递。如下示例：
+
+1
+2
+3
+4
+@Before("com.xyz.myapp.SystemArchitecture.dataAccessOperation() && args(account, ..)")
+public void validateAccount(Account account) {
+    // ...
+}
+切入点表达式 args(account, ..) 有两个用途。首先，它将匹配限制为仅方法采用至少一个参数且传递给该参数的类型是一个 Account 实例。其它，它通过 Account 参数使通知可以使用实际的 Account 对象。
+
+另一种编写方式是声明一个切入点，该切入点在与连接点匹配时提供 Account 对象值，然后从通知中引用指定的切入点，如下示例：
+
+1
+2
+3
+4
+5
+6
+7
+@Pointcut("com.xyz.myapp.SystemArchitecture.dataAccessOperation() && args(account,..)")
+private void accountDataAccessOperation(Account account) {}
+
+@Before("accountDataAccessOperation(account)")
+public void validateAccount(Account account) {
+    // ...
+}
+参数为注解类型
+
+代理对象（this），目标对象（target），和注解（@within，@target，@annotation，和 @args）都可以以类似的方式绑定参数。以下示例匹配使用 @Auditable 注解注释的方法，并传参到通知方法：
+
+定义 @Auditable 注解
+
+1
+2
+3
+4
+5
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.METHOD)
+public @interface Auditable {
+    AuditCode value();
+}
+通知匹配 @Auditable 注解
+
+1
+2
+3
+4
+5
+@Before("com.xyz.lib.Pointcuts.anyPublicMethod() && @annotation(auditable)")
+public void audit(Auditable auditable) {
+    AuditCode code = auditable.value();
+    // ...
+}
+通知参数与泛型
+Spring AOP可以处理类声明和方法参数中使用的泛型。 假设有如下通用类型：
+
+1
+2
+3
+4
+public interface Sample<T> {
+    void sampleGenericMethod(T param);
+    void sampleGenericCollectionMethod(Collection<T> param);
+}
+可以通过在要拦截方法的参数类型中输入通知参数，将方法类型的拦截限制为某些参数类型，如下示例：
+
+1
+2
+3
+4
+5
+//切点是上成声明的接口,接口定义的是泛型
+@Before("execution(* ..Sample+.sampleGenericMethod(*)) && args(param)")
+public void beforeSampleMethod(MyType param) {
+    // Advice implementation
+}
+这种方法不适用于集合泛型。 因此，不能按以下方式定义切入点：
+
+1
+2
+3
+4
+@Before("execution(* ..Sample+.sampleGenericCollectionMethod(*)) && args(param)")
+public void beforeSampleMethod(Collection<MyType> param) {
+    // Advice implementation
+}
+确定参数名称
+通知中调用的参数绑定依赖于切入点表达式中使用的名称与通知和切入点方法签名中声明的参数名称的匹配。即通知方法中的参数，与切入点表达式中的名称，切入点方法中的参数匹配。参数名无法通过Java反射获得，因此Spring AOP使用以下策略来确定参数名：
+
+如果用户显式指定了参数名，则使用指定的参数名。通知和切入点注解都有一个可选的 argNames 属性，可以使用该属性指定注解方法的参数名，这些参数名在运行时可用。如下示例：
+
+1
+2
+3
+4
+5
+6
+@Before(value="com.xyz.lib.Pointcuts.anyPublicMethod() && target(bean) && @annotation(auditable)",
+        argNames="bean,auditable")
+public void audit(Object bean, Auditable auditable) {
+    AuditCode code = auditable.value();
+    // ... use code and bean
+}
+如果第一个参数类型是 JoinPoint, ProceedingJoinPoint, 或 JoinPoint.StaticPart*，则可以忽略表达式 *argNames 属性中的参数名。如下示例：
+
+1
+2
+3
+4
+5
+@Before(value="com.xyz.lib.Pointcuts.anyPublicMethod() && target(bean) && @annotation(auditable)")
+public void audit(JoinPoint jp, Object bean, Auditable auditable) {
+    AuditCode code = auditable.value();
+    // ... use code, bean, and jp
+}
+如果第一个参数类型是 JoinPoint, ProceedingJoinPoint, 或 JoinPoint.StaticPart*，且不需要收集连接点的上下文，可以忽略 *argNames 属性。如下示例：
+
+1
+2
+3
+4
+@Before("com.xyz.lib.Pointcuts.anyPublicMethod()")
+public void audit(JoinPoint jp) {
+    // ... use jp
+}
+如果在编译代码时没有必要的调试信息，Spring AOP 将尝试推断绑定变量与参数的匹配。
+
+例如，如果切入点表达式中仅绑定了一个变量，并且 advice 方法接收一个参数，则进行匹配。如果在给定可用信息的情况下变量的绑定不明确，则抛出 AmbiguousBindingException。
+
+使用 argNames 属性有点笨拙。因此，如果没有指定 argNames 属性，Spring AOP 将查看该类的调用信息，并尝试从局部变量表中确定参数名称。只要编译的类包含调试信息（至少是“ -g：vars”），此信息就会存在。
+
+如果以上所有策略均失败，则抛出IllegalArgumentException。
+
+Proceeding参数
+编写一个 proceed 调用，其中的参数在 Spring AOP 和 AspectJ 中一致工作。解决方案是确保通知签名按顺序绑定每个方法参数。如下示例：
+
+1
+2
+3
+4
+5
+6
+7
+8
+@Around("execution(List<Account> find*(..)) && " +
+        "com.xyz.myapp.SystemArchitecture.inDataAccessLayer() && " +
+        "args(accountHolderNamePattern)")
+public Object preProcessQueryPattern(ProceedingJoinPoint pjp,
+        String accountHolderNamePattern) throws Throwable {
+    String newPattern = preProcess(accountHolderNamePattern);
+    return pjp.proceed(new Object[] {newPattern});
+}
+AOP 通知顺序
+实际系统开发中，可能存多条通知作用在同一个连接点上，这里就存在个执行顺序了。
+
+Spring AOP 遵循与 AspectJ 相同的优先级规则来确定通知顺序。
+
+进入切面，最高优先级的通知最先运行。例如，两个 before 通知，优先级高的先运行。
+退出切面，最低优先级的通知最后运行。例如，两个 after 通知，优先级高的第二个运行。
+当在不同的切面定义的两条通知都在同一连接点上运行时，除非另行指定，否则执行顺序是不确定的。
+
+可以人为显式指定优先级来控制执行顺序。可以让切面类实现 org.springframework.core.Ordered 接口，或在切面类上使用 org.springframework.core.annotation.Order 注解来实现。Ordered.getValue() 或 Order 注解的值越低（Order 注解默认值也是引用的 Ordered 接口的默认值），优先级越高，默认值是 Int 的最大值，即优先级最低（LOWEST_PRECEDENCE = Integer.MAX_VALUE）。
+
+当一个切面存在多条通知且都在同一连接点上运行，则其执行顺序是不确定的。可以考虑将多个通知方法合并每个连接点的一个通知方法中；或将多个通知拆分到多个切面类，可以定义优先级进行排序。
+
+AOP 使用例子
+下面示例实现一个重试机制的AOP。业务服务的执行可能因并发性问题而失败（例如，死锁失败），可能需要重试操作，在下次尝试时成功。这是一个明显跨越服务层中多个服务的需求，因此通过一个切面来实现是理想的方案。
+
+由于要重试操作，需要使用 Around 通知，以便多次调用 proceed。如下示例：
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+/**
+ * 实现了Ordered接口,可以自定义优先顺序
+ */
+@Aspect
+public class ConcurrentOperationExecutor implements Ordered {
+
+    private static final int DEFAULT_MAX_RETRIES = 2;
+
+    private int maxRetries = DEFAULT_MAX_RETRIES;
+    private int order = 1;
+
+    public void setMaxRetries(int maxRetries) {
+        this.maxRetries = maxRetries;
+    }
+
+    public int getOrder() {
+        return this.order;
+    }
+
+    public void setOrder(int order) {
+        this.order = order;
+    }
+
+    @Around("com.xyz.myapp.SystemArchitecture.businessService()")
+    public Object doConcurrentOperation(ProceedingJoinPoint pjp) throws Throwable {
+        int numAttempts = 0;
+        PessimisticLockingFailureException lockFailureException;
+        do {
+            numAttempts++;
+            try {
+                return pjp.proceed();
+            }
+            catch(PessimisticLockingFailureException ex) {
+                lockFailureException = ex;
+            }
+        } while(numAttempts <= this.maxRetries);
+        throw lockFailureException;
+    }
+
+}
+上面试中实现了 Ordered 接口，可以设置优先级高于事务通知（每次重试需要一个新的事务），maxRetries 和 order 属性都可以通过 Spring 配置(XML 注册 Bean 时注入参数，Spring Boot 可通过配置文件注入)。如果因为锁失败就重试，直到达到最大重试次数。
+
+1
+2
+3
+4
+5
+6
+<aop:aspectj-autoproxy/>
+
+<bean id="concurrentOperationExecutor" class="com.xyz.myapp.service.impl.ConcurrentOperationExecutor">
+    <property name="maxRetries" value="3"/>
+    <property name="order" value="100"/>
+</bean>
+增加匹配注解：定义注解，在需要重试的方法上添加此注解。
+
+1
+2
+3
+4
+@Retention(RetentionPolicy.RUNTIME)
+public @interface Idempotent {
+    // marker annotation
+}
+切点表达式增加注解匹配
+
+1
+2
+3
+4
+5
+@Around("com.xyz.myapp.SystemArchitecture.businessService() && " +
+        "@annotation(com.xyz.myapp.service.Idempotent)")
+public Object doConcurrentOperation(ProceedingJoinPoint pjp) throws Throwable {
+    // ...
+}
+AOP XML 支持
+参考 Schema-based AOP Support
+
+Spring Boot AOP
+Spring Boot 的自动配置默认就开启了 Spring AOP 的支持，等于在配置中启用了 @EnableAspectJAutoProxy 注解（所以此注解在可以省略）。前提是需要引入 spring-boot-starter-aop 依赖包。
+
+1
+2
+3
+4
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-aop</artifactId>
+</dependency>
+Spring Boot 实现 Spring AOP 自动配置集中在一自动配置类，源码如下：
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+@Configuration(proxyBeanMethods = false)
+@ConditionalOnProperty(prefix = "spring.aop", name = "auto", havingValue = "true", matchIfMissing = true)
+public class AopAutoConfiguration {
+
+	@Configuration(proxyBeanMethods = false)
+	@ConditionalOnClass(Advice.class)
+	static class AspectJAutoProxyingConfiguration {
+
+		@Configuration(proxyBeanMethods = false)
+		@EnableAspectJAutoProxy(proxyTargetClass = false)
+		@ConditionalOnProperty(prefix = "spring.aop", name = "proxy-target-class", havingValue = "false",
+				matchIfMissing = false)
+		static class JdkDynamicAutoProxyConfiguration {
+		}
+
+		@Configuration(proxyBeanMethods = false)
+		@EnableAspectJAutoProxy(proxyTargetClass = true)
+		@ConditionalOnProperty(prefix = "spring.aop", name = "proxy-target-class", havingValue = "true",
+				matchIfMissing = true)
+		static class CglibAutoProxyConfiguration {
+		}
+	}
+
+	@Configuration(proxyBeanMethods = false)
+	@ConditionalOnMissingClass("org.aspectj.weaver.Advice")
+	@ConditionalOnProperty(prefix = "spring.aop", name = "proxy-target-class", havingValue = "true",
+			matchIfMissing = true)
+	static class ClassProxyingConfiguration {
+		ClassProxyingConfiguration(BeanFactory beanFactory) {
+			if (beanFactory instanceof BeanDefinitionRegistry) {
+				BeanDefinitionRegistry registry = (BeanDefinitionRegistry) beanFactory;
+				AopConfigUtils.registerAutoProxyCreatorIfNecessary(registry);
+				AopConfigUtils.forceAutoProxyCreatorToUseClassProxying(registry);
+			}
+		}
+
+	}
+}
+从上面源码可以看出，Spring Boot 对 Spring AOP 自动配置的支持有两个配置项：
+
+spring.aop.auto=true
+
+是否开启 Spring AOP 自动配置，默认为 true，即开启；如果设置为 false，则关闭 Spring AOP 的自动配置。
+
+spring.aop.proxy-target-class=true
+
+该属性默认值为 true，即 Spring Boot 对 Spring AOP 的支持默认使用基于类的代理，即使用 CGLIB 方案；若设置为 false，则使用 JDK 提供的代理。
+
+Spring AOP 应用
+动态切换数据源
+参考 Spring Boot 2实践系列(五十)：Spring AOP 实现动态数据源切换
+
+统一日志记录
+参考 Spring Boot 2实践系列(四十九)：Spring AOP 实现方法入参和返回统一记录日志
+
+防止重复提交
+参考 拦截器 与Spring AOP 实现防止表单重复提交
+
+防止分布式重复提交
+参考 分布式微服务应用系列(十三)：分布式并发重复提交问题
+
+API 接口请求限制
+参考 Spring Boot 2实践系列(四十六)：Spring AOP与拦截器实现API接口请求限制
+
+API 接口请求耗时监控
+参考 Spring Boot 2实践系列(四十七)：Spring AOP 实现API接口处理请求耗时监控
+
+其它参考
+Spring AOP：Aspect Oriented Programming with Spring
